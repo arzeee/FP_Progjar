@@ -1,3 +1,4 @@
+# belum di sinkron
 import pygame
 import socket
 import pickle
