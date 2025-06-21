@@ -36,8 +36,11 @@ def handle_client(conn, addr, player_id):
                         "is_attacking": False,
                         "attack_done": False,
                         "is_dead": False,
-                        "death_time": None
+                        "death_time": None,
+                        "facing": data.get("facing", "right"),
+                        "is_moving": data.get("is_moving", False)
                     }
+
 
                 player = players[pid]
 
@@ -49,6 +52,9 @@ def handle_client(conn, addr, player_id):
                 player["x"] = data["x"]
                 player["y"] = data["y"]
                 player["is_attacking"] = data.get("is_attacking", False)
+                player["facing"] = data.get("facing", "right")  # default ke kanan
+                player["is_moving"] = data.get("is_moving", False)
+
 
                 # Deteksi serangan (jika belum attack_done dan masih hidup)
                 if data.get("attack_range") and player["is_attacking"] and not player["attack_done"] and not player["is_dead"]:
