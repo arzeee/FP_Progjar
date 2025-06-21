@@ -3,11 +3,13 @@ import socket
 import pickle
 import sys
 
+# Socket setup
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client_socket.connect(("localhost", 5555))
 client_id = str(pickle.loads(client_socket.recv(1024)))
 print(f"Connected as Player {client_id}")
 
+# Pygame setup
 pygame.init()
 WIDTH, HEIGHT = 640, 480
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -26,22 +28,21 @@ class Samurai:
     def __init__(self, id='1', isremote=False):
         self.id = id
         self.hp = 100
-        self.damage = 20
         self.isremote = isremote
-        self.direction = "down"
+        self.is_dead = False
+        self.is_attacking = False
         self.facing = "right"
         self.x = WIDTH // 2
         self.y = HEIGHT // 2
-        self.spawn_x = self.x
-        self.spawn_y = self.y
         self.speed = 3
         self.is_moving = False
-        self.is_attacking = False
-        self.attack_done = False
-        self.is_dead = False
-        self.death_time = None
-        self.respawn_delay = 15000
+        self.current_frame = 0
+        self.animation_counter = 0
+        self.animation_delay = 10
+        self.attack_delay = 4
+        self.dead_delay = 10
 
+        # Load sprites
         self.idle_sheet = pygame.image.load("asset/Samurai_Archer/Idle.png").convert_alpha()
         self.walk_sheet = pygame.image.load("asset/Samurai_Archer/Walk.png").convert_alpha()
         self.attack_sheet = pygame.image.load("asset/Samurai_Archer/Attack_2.png").convert_alpha()
@@ -52,32 +53,22 @@ class Samurai:
         self.attack_frames = [self.attack_sheet.subsurface((i * FRAME_WIDTH, 0, FRAME_WIDTH, FRAME_HEIGHT)) for i in range(NUM_ATCK_FRAMES)]
         self.dead_frames = [self.dead_sheet.subsurface((i * FRAME_WIDTH, 0, FRAME_WIDTH, FRAME_HEIGHT)) for i in range(NUM_DEAD_FRAMES)]
 
-        self.current_frame = 0
-        self.animation_counter = 0
-        self.animation_delay = 10
-        self.animation_atck_delay = 4
-        self.animation_dead_delay = 10
-
     def move(self, keys):
-        if self.isremote or self.is_attacking or self.is_dead:
+        if self.isremote or self.is_dead or self.is_attacking:
             return
         self.is_moving = False
         if keys[pygame.K_UP]:
             self.y -= self.speed
-            self.direction = "up"
             self.is_moving = True
         elif keys[pygame.K_DOWN]:
             self.y += self.speed
-            self.direction = "down"
             self.is_moving = True
-        elif keys[pygame.K_LEFT]:
+        if keys[pygame.K_LEFT]:
             self.x -= self.speed
-            self.direction = "left"
             self.facing = "left"
             self.is_moving = True
         elif keys[pygame.K_RIGHT]:
             self.x += self.speed
-            self.direction = "right"
             self.facing = "right"
             self.is_moving = True
         if self.is_moving:
@@ -96,54 +87,39 @@ class Samurai:
         else:
             return pygame.Rect(self.x - range_width - offset_x, self.y + 30, range_width, range_height)
 
-    def update_death_and_respawn(self):
-        if self.is_dead and self.death_time is None:
-            self.death_time = pygame.time.get_ticks()
-        elif self.is_dead and self.death_time is not None:
-            if pygame.time.get_ticks() - self.death_time >= self.respawn_delay:
-                self.hp = 100
-                self.is_dead = False
-                self.death_time = None
-                self.x, self.y = self.spawn_x, self.spawn_y
-                self.current_frame = 0
-                self.animation_counter = 0
-
     def draw(self, surface):
-        self.update_death_and_respawn()
         self.animation_counter += 1
         if self.is_dead:
-            if self.animation_counter >= self.animation_dead_delay:
+            if self.animation_counter >= self.dead_delay:
                 self.animation_counter = 0
                 if self.current_frame < len(self.dead_frames) - 1:
                     self.current_frame += 1
-            image = self.dead_frames[min(self.current_frame, len(self.dead_frames) - 1)]
-
+            frame = self.dead_frames[min(self.current_frame, len(self.dead_frames) - 1)]
         elif self.is_attacking:
-            if self.animation_counter >= self.animation_atck_delay:
+            if self.animation_counter >= self.attack_delay:
                 self.animation_counter = 0
                 self.current_frame += 1
                 if self.current_frame >= len(self.attack_frames):
-                    self.current_frame = len(self.attack_frames) - 1
+                    self.current_frame = 0
                     self.is_attacking = False
-            if self.current_frame >= len(self.attack_frames):
-                self.current_frame = 0
-                self.is_attacking = False
-            image = self.attack_frames[self.current_frame]
+            frame = self.attack_frames[min(self.current_frame, len(self.attack_frames) - 1)]
         elif self.is_moving:
             if self.animation_counter >= self.animation_delay:
                 self.animation_counter = 0
                 self.current_frame = (self.current_frame + 1) % len(self.walk_frames)
-            image = self.walk_frames[self.current_frame]
+            frame = self.walk_frames[self.current_frame]
         else:
             if self.animation_counter >= self.animation_delay:
                 self.animation_counter = 0
                 self.current_frame = (self.current_frame + 1) % len(self.idle_frames)
-            image = self.idle_frames[self.current_frame]
+            frame = self.idle_frames[self.current_frame]
 
         if self.facing == "left":
-            image = pygame.transform.flip(image, True, False)
-        surface.blit(image, (self.x, self.y))
+            frame = pygame.transform.flip(frame, True, False)
 
+        surface.blit(frame, (self.x, self.y))
+
+        # HP Bar
         bar_width = 60
         bar_height = 8
         health_ratio = self.hp / 100
@@ -152,17 +128,17 @@ class Samurai:
         pygame.draw.rect(surface, (255, 0, 0), (bar_x, bar_y, bar_width, bar_height))
         pygame.draw.rect(surface, (0, 255, 0), (bar_x, bar_y, int(bar_width * health_ratio), bar_height))
 
-def sync_with_server(player_obj):
+def sync_with_server(player):
     try:
         send_data = {
-            "id": player_obj.id,
-            "x": player_obj.x,
-            "y": player_obj.y,
-            "is_attacking": player_obj.is_attacking
+            "id": player.id,
+            "x": player.x,
+            "y": player.y,
+            "is_attacking": player.is_attacking
         }
-        if player_obj.is_attacking:
-            rect = player_obj.get_attack_range_rect()
-            send_data["attack_range"] = [rect.x, rect.y, rect.width, rect.height]
+        if player.is_attacking:
+            r = player.get_attack_range_rect()
+            send_data["attack_range"] = [r.x, r.y, r.width, r.height]
 
         client_socket.sendall(pickle.dumps(send_data))
         return pickle.loads(client_socket.recv(4096))
@@ -171,12 +147,16 @@ def sync_with_server(player_obj):
         pygame.quit()
         sys.exit()
 
+# Inisialisasi player lokal
 current_player = Samurai(client_id)
+
+# Inisialisasi slot player lain
 players = {
     pid: Samurai(pid, isremote=True)
-    for pid in ['1', '2', '3'] if pid != client_id
+    for pid in ['1', '2'] if pid != client_id
 }
 
+# Game loop
 while True:
     screen.fill((255, 255, 255))
 
@@ -193,6 +173,7 @@ while True:
     keys = pygame.key.get_pressed()
     current_player.move(keys)
 
+    # Sync
     state = sync_with_server(current_player)
     if state:
         all_data = state.get("players", {})
@@ -208,6 +189,7 @@ while True:
                 p.is_attacking = pdata["is_attacking"]
                 p.is_dead = pdata["is_dead"]
 
+    # Render
     current_player.draw(screen)
     for p in players.values():
         p.draw(screen)
