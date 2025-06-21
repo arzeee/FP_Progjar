@@ -3,15 +3,15 @@ import socket
 import pickle
 import sys
 
-# Socket setup
+# Koneksi ke server
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client_socket.connect(("localhost", 5555))
 client_id = str(pickle.loads(client_socket.recv(1024)))
 print(f"Connected as Player {client_id}")
 
-# Pygame setup
+# Setup pygame
 pygame.init()
-WIDTH, HEIGHT = 640, 480
+WIDTH, HEIGHT = 1200, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Samurai Battle Arena")
 clock = pygame.time.Clock()
@@ -23,6 +23,11 @@ NUM_IDLE_FRAMES = 9
 NUM_WALK_FRAMES = 8
 NUM_ATCK_FRAMES = 5
 NUM_DEAD_FRAMES = 5
+
+# Load background
+background = pygame.image.load("asset/Map2.jpg").convert()
+background = pygame.transform.scale(background, (WIDTH, HEIGHT))
+
 
 class Samurai:
     def __init__(self, id='1', isremote=False):
@@ -42,7 +47,6 @@ class Samurai:
         self.attack_delay = 4
         self.dead_delay = 10
 
-        # Load sprites
         self.idle_sheet = pygame.image.load("asset/Samurai_Archer/Idle.png").convert_alpha()
         self.walk_sheet = pygame.image.load("asset/Samurai_Archer/Walk.png").convert_alpha()
         self.attack_sheet = pygame.image.load("asset/Samurai_Archer/Attack_2.png").convert_alpha()
@@ -71,9 +75,9 @@ class Samurai:
             self.x += self.speed
             self.facing = "right"
             self.is_moving = True
-        if self.is_moving:
-            self.current_frame = 0
-            self.animation_counter = 0
+
+        self.x = max(0, min(self.x, WIDTH - FRAME_WIDTH))
+        self.y = max(0, min(self.y, HEIGHT - FRAME_HEIGHT))
 
     def get_hitbox(self):
         return pygame.Rect(self.x + 40, self.y + 50, 45, 80)
@@ -89,12 +93,15 @@ class Samurai:
 
     def draw(self, surface):
         self.animation_counter += 1
+
         if self.is_dead:
             if self.animation_counter >= self.dead_delay:
                 self.animation_counter = 0
                 if self.current_frame < len(self.dead_frames) - 1:
                     self.current_frame += 1
-            frame = self.dead_frames[min(self.current_frame, len(self.dead_frames) - 1)]
+            self.current_frame %= len(self.dead_frames)
+            frame = self.dead_frames[self.current_frame]
+
         elif self.is_attacking:
             if self.animation_counter >= self.attack_delay:
                 self.animation_counter = 0
@@ -102,16 +109,21 @@ class Samurai:
                 if self.current_frame >= len(self.attack_frames):
                     self.current_frame = 0
                     self.is_attacking = False
-            frame = self.attack_frames[min(self.current_frame, len(self.attack_frames) - 1)]
+            self.current_frame %= len(self.attack_frames)
+            frame = self.attack_frames[self.current_frame]
+
         elif self.is_moving:
             if self.animation_counter >= self.animation_delay:
                 self.animation_counter = 0
-                self.current_frame = (self.current_frame + 1) % len(self.walk_frames)
+                self.current_frame += 1
+            self.current_frame %= len(self.walk_frames)
             frame = self.walk_frames[self.current_frame]
+
         else:
             if self.animation_counter >= self.animation_delay:
                 self.animation_counter = 0
-                self.current_frame = (self.current_frame + 1) % len(self.idle_frames)
+                self.current_frame += 1
+            self.current_frame %= len(self.idle_frames)
             frame = self.idle_frames[self.current_frame]
 
         if self.facing == "left":
@@ -119,7 +131,7 @@ class Samurai:
 
         surface.blit(frame, (self.x, self.y))
 
-        # HP Bar
+        # HP bar
         bar_width = 60
         bar_height = 8
         health_ratio = self.hp / 100
@@ -127,6 +139,7 @@ class Samurai:
         bar_y = self.y + 20
         pygame.draw.rect(surface, (255, 0, 0), (bar_x, bar_y, bar_width, bar_height))
         pygame.draw.rect(surface, (0, 255, 0), (bar_x, bar_y, int(bar_width * health_ratio), bar_height))
+
 
 def sync_with_server(player):
     try:
@@ -147,18 +160,14 @@ def sync_with_server(player):
         pygame.quit()
         sys.exit()
 
-# Inisialisasi player lokal
-current_player = Samurai(client_id)
 
-# Inisialisasi slot player lain
-players = {
-    pid: Samurai(pid, isremote=True)
-    for pid in ['1', '2'] if pid != client_id
-}
+# Buat player lokal
+current_player = Samurai(client_id)
+players = {}
 
 # Game loop
 while True:
-    screen.fill((255, 255, 255))
+    screen.blit(background, (0, 0))
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -173,7 +182,7 @@ while True:
     keys = pygame.key.get_pressed()
     current_player.move(keys)
 
-    # Sync
+    # Sinkronisasi ke server
     state = sync_with_server(current_player)
     if state:
         all_data = state.get("players", {})
@@ -181,7 +190,9 @@ while True:
             if pid == current_player.id:
                 current_player.hp = pdata["hp"]
                 current_player.is_dead = pdata["is_dead"]
-            elif pid in players:
+            else:
+                if pid not in players:
+                    players[pid] = Samurai(pid, isremote=True)
                 p = players[pid]
                 p.x = pdata["x"]
                 p.y = pdata["y"]
@@ -189,7 +200,6 @@ while True:
                 p.is_attacking = pdata["is_attacking"]
                 p.is_dead = pdata["is_dead"]
 
-    # Render
     current_player.draw(screen)
     for p in players.values():
         p.draw(screen)
