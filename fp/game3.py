@@ -147,7 +147,9 @@ def sync_with_server(player):
             "id": player.id,
             "x": player.x,
             "y": player.y,
-            "is_attacking": player.is_attacking
+            "is_attacking": player.is_attacking,
+            "facing": player.facing,
+            "is_moving": player.is_moving
         }
         if player.is_attacking:
             r = player.get_attack_range_rect()
@@ -159,6 +161,7 @@ def sync_with_server(player):
         print("Koneksi ke server terputus.")
         pygame.quit()
         sys.exit()
+
 
 
 # Buat player lokal
@@ -199,6 +202,8 @@ while True:
                 p.hp = pdata["hp"]
                 p.is_attacking = pdata["is_attacking"]
                 p.is_dead = pdata["is_dead"]
+                p.facing = pdata.get("facing", "right")
+                p.is_moving = pdata.get("is_moving", False)
 
     current_player.draw(screen)
     for p in players.values():
