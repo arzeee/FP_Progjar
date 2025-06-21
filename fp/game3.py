@@ -1,13 +1,17 @@
 import pygame
+import socket
+import pickle
 import sys
 
-# Inisialisasi Pygame
-pygame.init()
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+client_socket.connect(("localhost", 5555))
+client_id = str(pickle.loads(client_socket.recv(1024)))
+print(f"Connected as Player {client_id}")
 
+pygame.init()
 WIDTH, HEIGHT = 640, 480
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Samurai Battle Arena")
-
 clock = pygame.time.Clock()
 FPS = 60
 
@@ -34,19 +38,14 @@ class Samurai:
         self.is_moving = False
         self.is_attacking = False
         self.attack_done = False
-        self.show_box = False
         self.is_dead = False
-        self.death_done = False
         self.death_time = None
         self.respawn_delay = 15000
 
-      #   self.last_hp_tick = pygame.time.get_ticks()
-      #   self.hp_interval = 1000
-
-        self.idle_sheet = pygame.image.load("asset/craftpix-net-123681-free-samurai-pixel-art-sprite-sheets/Samurai_Archer/Idle.png").convert_alpha()
-        self.walk_sheet = pygame.image.load("asset/craftpix-net-123681-free-samurai-pixel-art-sprite-sheets/Samurai_Archer/Walk.png").convert_alpha()
-        self.attack_sheet = pygame.image.load("asset/craftpix-net-123681-free-samurai-pixel-art-sprite-sheets/Samurai_Archer/Attack_2.png").convert_alpha()
-        self.dead_sheet = pygame.image.load("asset/craftpix-net-123681-free-samurai-pixel-art-sprite-sheets/Samurai_Archer/Dead.png").convert_alpha()
+        self.idle_sheet = pygame.image.load("asset/Samurai_Archer/Idle.png").convert_alpha()
+        self.walk_sheet = pygame.image.load("asset/Samurai_Archer/Walk.png").convert_alpha()
+        self.attack_sheet = pygame.image.load("asset/Samurai_Archer/Attack_2.png").convert_alpha()
+        self.dead_sheet = pygame.image.load("asset/Samurai_Archer/Dead.png").convert_alpha()
 
         self.idle_frames = [self.idle_sheet.subsurface((i * FRAME_WIDTH, 0, FRAME_WIDTH, FRAME_HEIGHT)) for i in range(NUM_IDLE_FRAMES)]
         self.walk_frames = [self.walk_sheet.subsurface((i * FRAME_WIDTH, 0, FRAME_WIDTH, FRAME_HEIGHT)) for i in range(NUM_WALK_FRAMES)]
@@ -59,21 +58,9 @@ class Samurai:
         self.animation_atck_delay = 4
         self.animation_dead_delay = 10
 
-   #  def update_hp_per_second(self):
-   #      now = pygame.time.get_ticks()
-   #      if not self.is_dead and now - self.last_hp_tick >= self.hp_interval:
-   #          self.hp = max(0, self.hp - 20)
-   #          self.last_hp_tick = now
-   #          if self.hp == 0:
-   #              self.is_dead = True
-   #              self.current_frame = 0
-   #              self.animation_counter = 0
-   #              self.death_time = pygame.time.get_ticks()
-
     def move(self, keys):
         if self.isremote or self.is_attacking or self.is_dead:
             return
-        prev_state = self.is_moving
         self.is_moving = False
         if keys[pygame.K_UP]:
             self.y -= self.speed
@@ -93,63 +80,54 @@ class Samurai:
             self.direction = "right"
             self.facing = "right"
             self.is_moving = True
-        if self.is_moving and not prev_state:
+        if self.is_moving:
             self.current_frame = 0
             self.animation_counter = 0
-
-    def attack(self, enemies):
-        if self.is_dead:
-            return
-        range_width = 40
-        range_height = 80
-        offset_x = -37.5
-        if self.facing == "right":
-            range_rect = pygame.Rect(self.x + FRAME_WIDTH + offset_x, self.y + 30, range_width, range_height)
-        else:
-            range_rect = pygame.Rect(self.x - range_width - offset_x, self.y + 30, range_width, range_height)
-        for enemy in enemies:
-            if enemy.hp > 0 and range_rect.colliderect(enemy.get_hitbox()):
-                enemy.hp = max(0, enemy.hp - self.damage)
-                if enemy.hp == 0:
-                    enemy.is_dead = True
-                    enemy.current_frame = 0
-                    enemy.animation_counter = 0
-                    enemy.death_time = pygame.time.get_ticks()
 
     def get_hitbox(self):
         return pygame.Rect(self.x + 40, self.y + 50, 45, 80)
 
-    def respawn_check(self):
-        if self.is_dead and self.death_time:
-            now = pygame.time.get_ticks()
-            if now - self.death_time >= self.respawn_delay:
+    def get_attack_range_rect(self):
+        range_width = 40
+        range_height = 80
+        offset_x = -37.5
+        if self.facing == "right":
+            return pygame.Rect(self.x + FRAME_WIDTH + offset_x, self.y + 30, range_width, range_height)
+        else:
+            return pygame.Rect(self.x - range_width - offset_x, self.y + 30, range_width, range_height)
+
+    def update_death_and_respawn(self):
+        if self.is_dead and self.death_time is None:
+            self.death_time = pygame.time.get_ticks()
+        elif self.is_dead and self.death_time is not None:
+            if pygame.time.get_ticks() - self.death_time >= self.respawn_delay:
                 self.hp = 100
                 self.is_dead = False
                 self.death_time = None
+                self.x, self.y = self.spawn_x, self.spawn_y
                 self.current_frame = 0
                 self.animation_counter = 0
-                self.x, self.y = self.spawn_x, self.spawn_y
 
-    def draw(self, surface, enemies=[]):
-        self.respawn_check()
+    def draw(self, surface):
+        self.update_death_and_respawn()
         self.animation_counter += 1
         if self.is_dead:
-            if self.current_frame < len(self.dead_frames) - 1:
-                if self.animation_counter >= self.animation_dead_delay:
-                    self.animation_counter = 0
+            if self.animation_counter >= self.animation_dead_delay:
+                self.animation_counter = 0
+                if self.current_frame < len(self.dead_frames) - 1:
                     self.current_frame += 1
-            image = self.dead_frames[self.current_frame]
+            image = self.dead_frames[min(self.current_frame, len(self.dead_frames) - 1)]
+
         elif self.is_attacking:
             if self.animation_counter >= self.animation_atck_delay:
                 self.animation_counter = 0
                 self.current_frame += 1
-                if self.current_frame == len(self.attack_frames) // 2 and not self.attack_done:
-                    self.attack(enemies)
-                    self.attack_done = True
                 if self.current_frame >= len(self.attack_frames):
-                    self.current_frame = 0
+                    self.current_frame = len(self.attack_frames) - 1
                     self.is_attacking = False
-                    self.attack_done = False
+            if self.current_frame >= len(self.attack_frames):
+                self.current_frame = 0
+                self.is_attacking = False
             image = self.attack_frames[self.current_frame]
         elif self.is_moving:
             if self.animation_counter >= self.animation_delay:
@@ -157,26 +135,14 @@ class Samurai:
                 self.current_frame = (self.current_frame + 1) % len(self.walk_frames)
             image = self.walk_frames[self.current_frame]
         else:
-            if self.current_frame >= len(self.idle_frames):
-                self.current_frame = 0
             if self.animation_counter >= self.animation_delay:
                 self.animation_counter = 0
                 self.current_frame = (self.current_frame + 1) % len(self.idle_frames)
             image = self.idle_frames[self.current_frame]
+
         if self.facing == "left":
             image = pygame.transform.flip(image, True, False)
         surface.blit(image, (self.x, self.y))
-
-        if not self.is_dead and not self.show_box:
-            range_width = 40
-            range_height = 80
-            offset_x = -37.5
-            if self.facing == "right":
-                range_rect = pygame.Rect(self.x + FRAME_WIDTH + offset_x, self.y + 30, range_width, range_height)
-            else:
-                range_rect = pygame.Rect(self.x - range_width - offset_x, self.y + 30, range_width, range_height)
-            pygame.draw.rect(surface, (255, 0, 0), range_rect, 2)
-            pygame.draw.rect(surface, (0, 0, 255), self.get_hitbox(), 2)
 
         bar_width = 60
         bar_height = 8
@@ -186,27 +152,31 @@ class Samurai:
         pygame.draw.rect(surface, (255, 0, 0), (bar_x, bar_y, bar_width, bar_height))
         pygame.draw.rect(surface, (0, 255, 0), (bar_x, bar_y, int(bar_width * health_ratio), bar_height))
 
-# Buat pemain utama
-current_player = Samurai("1")
+def sync_with_server(player_obj):
+    try:
+        send_data = {
+            "id": player_obj.id,
+            "x": player_obj.x,
+            "y": player_obj.y,
+            "is_attacking": player_obj.is_attacking
+        }
+        if player_obj.is_attacking:
+            rect = player_obj.get_attack_range_rect()
+            send_data["attack_range"] = [rect.x, rect.y, rect.width, rect.height]
 
-# Pemain lain
+        client_socket.sendall(pickle.dumps(send_data))
+        return pickle.loads(client_socket.recv(4096))
+    except:
+        print("Koneksi ke server terputus.")
+        pygame.quit()
+        sys.exit()
+
+current_player = Samurai(client_id)
 players = {
-    "2": Samurai("2", isremote=True),
-    "3": Samurai("3", isremote=True)
+    pid: Samurai(pid, isremote=True)
+    for pid in ['1', '2', '3'] if pid != client_id
 }
 
-current_player.spawn_x = 100
-current_player.spawn_y = 200
-players["2"].x = 300
-players["2"].y = 200
-players["2"].spawn_x = 300
-players["2"].spawn_y = 200
-players["3"].x = 450
-players["3"].y = 200
-players["3"].spawn_x = 450
-players["3"].spawn_y = 200
-
-# Game Loop
 while True:
     screen.fill((255, 255, 255))
 
@@ -219,15 +189,27 @@ while True:
                 current_player.is_attacking = True
                 current_player.current_frame = 0
                 current_player.animation_counter = 0
-                current_player.attack_done = False
 
     keys = pygame.key.get_pressed()
     current_player.move(keys)
-   #  current_player.update_hp_per_second()
-    current_player.draw(screen, enemies=[p for p in players.values()])
 
+    state = sync_with_server(current_player)
+    if state:
+        all_data = state.get("players", {})
+        for pid, pdata in all_data.items():
+            if pid == current_player.id:
+                current_player.hp = pdata["hp"]
+                current_player.is_dead = pdata["is_dead"]
+            elif pid in players:
+                p = players[pid]
+                p.x = pdata["x"]
+                p.y = pdata["y"]
+                p.hp = pdata["hp"]
+                p.is_attacking = pdata["is_attacking"]
+                p.is_dead = pdata["is_dead"]
+
+    current_player.draw(screen)
     for p in players.values():
-      #   p.update_hp_per_second()
         p.draw(screen)
 
     pygame.display.flip()
