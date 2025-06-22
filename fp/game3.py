@@ -136,8 +136,10 @@ class Samurai:
         if self.isremote or self.is_dead or self.is_attacking:
             self.is_moving = False
             return
-            
+
+        moving_before = self.is_moving
         self.is_moving = False
+
         if keys[pygame.K_UP] or keys[pygame.K_w]:
             self.y -= self.speed
             self.is_moving = True
@@ -154,8 +156,13 @@ class Samurai:
             self.facing = "right"
             self.is_moving = True
 
+        if self.is_moving and not moving_before:
+            self.current_frame = 0
+            self.animation_counter = 0
+
         self.x = max(0, min(self.x, WIDTH - FRAME_WIDTH))
         self.y = max(0, min(self.y, HEIGHT - FRAME_HEIGHT))
+
 
     def get_attack_range_rect(self):
         range_width = 40
@@ -170,29 +177,41 @@ class Samurai:
         self.animation_counter += 1
 
         if self.is_dead:
+            if self.current_frame >= len(self.dead_frames):
+                self.current_frame = 0  # <- Fix untuk index error
             if self.animation_counter >= self.dead_delay:
                 self.animation_counter = 0
                 if self.current_frame < len(self.dead_frames) - 1:
                     self.current_frame += 1
             frame = self.dead_frames[self.current_frame]
+
         elif self.is_attacking:
+            if self.current_frame >= len(self.attack_frames):
+                self.current_frame = 0  # <- Fix tambahan
             if self.animation_counter >= self.attack_delay:
                 self.animation_counter = 0
-                self.current_frame = (self.current_frame + 1)
+                self.current_frame += 1
                 if self.current_frame >= len(self.attack_frames):
                     self.current_frame = 0
                     self.is_attacking = False
-            frame = self.attack_frames[self.current_frame % len(self.attack_frames)]
+            frame = self.attack_frames[self.current_frame]
+
         elif self.is_moving:
+            if self.current_frame >= len(self.walk_frames):
+                self.current_frame = 0  # <- Fix penting
             if self.animation_counter >= self.animation_delay:
                 self.animation_counter = 0
                 self.current_frame = (self.current_frame + 1) % len(self.walk_frames)
             frame = self.walk_frames[self.current_frame]
+
         else:
+            if self.current_frame >= len(self.idle_frames):
+                self.current_frame = 0  # <- Fix aman
             if self.animation_counter >= self.animation_delay:
                 self.animation_counter = 0
                 self.current_frame = (self.current_frame + 1) % len(self.idle_frames)
             frame = self.idle_frames[self.current_frame]
+
 
         if self.facing == "left":
             frame = pygame.transform.flip(frame, True, False)
