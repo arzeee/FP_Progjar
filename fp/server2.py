@@ -2,16 +2,16 @@ import socket
 import threading
 import pickle
 import time
+import pygame 
 
 # Konfigurasi Server
 HOST = "0.0.0.0"
-PORT = 6002  # Ganti sesuai dengan port yang diberikan oleh load balancer
+PORT = 6002  
+RESPAWN_DELAY = 15
+DAMAGE = 20
 
 players = {}
 lock = threading.Lock()
-
-RESPAWN_DELAY = 15
-DAMAGE = 20
 
 class Player:
     def __init__(self, conn, addr, pid):
@@ -26,9 +26,10 @@ class Player:
         self.attack_range = None
         self.facing = 'right'
         self.is_moving = False
-        self.username = f"Player {pid}"
+        self.username = None  
         self.score = 0
         self.death_time = None
+        self.has_hit = False  
 
     def to_dict(self):
         return {
@@ -40,7 +41,7 @@ class Player:
             "facing": self.facing,
             "is_moving": self.is_moving,
             "score": self.score,
-            "username": self.username,
+            "username": self.username or f"Player {self.id}",
         }
 
 def handle_client(conn, addr, pid):
@@ -66,23 +67,26 @@ def handle_client(conn, addr, pid):
                 player.facing = recv_data.get("facing", "right")
                 player.is_moving = recv_data.get("is_moving", False)
 
-                if not player.username and recv_data.get("username"):
+                if player.username is None and "username" in recv_data:
                     player.username = recv_data["username"]
 
-                if player.is_attacking and not player.is_dead and "attack_range" in recv_data:
-                    player.attack_range = recv_data["attack_range"]
+                # Reset has_hit saat tidak menyerang
+                if not player.is_attacking:
+                    player.has_hit = False
+
+                if player.is_attacking and not player.has_hit and not player.is_dead and "attack_range" in recv_data:
+                    atk_rect = pygame.Rect(*recv_data["attack_range"])
                     for pid2, target in players.items():
                         if pid2 != pid and not target.is_dead:
-                            target_rect = (target.x + 40, target.y + 50, 45, 80)
-                            atk_rect = recv_data["attack_range"]
-                            atk_rect = pygame.Rect(*atk_rect)
-                            target_hitbox = pygame.Rect(*target_rect)
-                            if atk_rect.colliderect(target_hitbox):
+                            target_rect = pygame.Rect(target.x + 40, target.y + 50, 45, 80)
+                            if atk_rect.colliderect(target_rect):
                                 target.hp = max(0, target.hp - DAMAGE)
+                                player.has_hit = True
                                 if target.hp == 0:
                                     target.is_dead = True
                                     target.death_time = time.time()
                                     player.score += 1
+                                break
 
                 # Respawn
                 if player.is_dead and player.death_time:
@@ -102,7 +106,8 @@ def handle_client(conn, addr, pid):
 
     print(f"[DISCONNECT] Player {pid} disconnected")
     with lock:
-        del players[pid]
+        if pid in players:
+            del players[pid]
     conn.close()
 
 def start():
@@ -117,10 +122,9 @@ def start():
         conn, addr = server.accept()
         pid = str(next_id)
         next_id += 1
-        thread = threading.Thread(target=handle_client, args=(conn, addr, pid))
+        thread = threading.Thread(target=handle_client, args=(conn, addr, pid), daemon=True)
         thread.start()
         print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
 
 if __name__ == "__main__":
-    import pygame  # Pastikan pygame diimpor untuk pygame.Rect di server
     start()
