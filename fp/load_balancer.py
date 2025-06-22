@@ -4,28 +4,24 @@ import threading
 # Daftar backend server
 BACKEND_SERVERS = [
     ('localhost', 6001),
-    ('localhost', 6002),
-    ('localhost', 6003)
+    ('localhost', 6002)
+    #('localhost', 6003)
 ]
 
-# Untuk tracking giliran server (round robin)
 server_index = 0
 server_lock = threading.Lock()
 
 def handle_client(client_socket):
     global server_index
 
-    # Pilih server berikutnya dengan round robin
     with server_lock:
         target_host, target_port = BACKEND_SERVERS[server_index]
         server_index = (server_index + 1) % len(BACKEND_SERVERS)
 
     try:
-        # Buat koneksi ke server backend
         backend_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         backend_socket.connect((target_host, target_port))
 
-        # Relay data antara client dan backend
         def forward(source, destination):
             try:
                 while True:
@@ -39,7 +35,6 @@ def handle_client(client_socket):
                 source.close()
                 destination.close()
 
-        # Buat 2 thread relay
         threading.Thread(target=forward, args=(client_socket, backend_socket), daemon=True).start()
         threading.Thread(target=forward, args=(backend_socket, client_socket), daemon=True).start()
 
