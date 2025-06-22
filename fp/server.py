@@ -8,10 +8,10 @@ import time
 HOST = "0.0.0.0"
 PORT = 5555
 
-players = {}  # id: {x, y, hp, is_dead, is_attacking, death_time, attack_done}
+players = {}  # id: {x, y, hp, is_dead, is_attacking, death_time, score, username}
 lock = threading.Lock()
 
-RESPAWN_DELAY = 15000  # 15 detik
+RESPAWN_DELAY = 10000  # 10 detik
 SCREEN_WIDTH, SCREEN_HEIGHT = 1200, 600
 
 def respawn_player():
@@ -29,7 +29,7 @@ def respawn_player():
                         # Atur posisi respawn ke tengah layar
                         target["x"] = SCREEN_WIDTH // 2
                         target["y"] = SCREEN_HEIGHT // 2
-                        print(f"[RESPAWN] Player {tid} respawned.")
+                        print(f"[RESPAWN] Player {tid} ({target.get('username', 'N/A')}) respawned.")
         
         # efisiensi CPU
         time.sleep(1/30) # Cek 30 kali per detik
@@ -52,6 +52,7 @@ def handle_client(conn, addr, player_id):
                 # Inisialisasi player jika belum ada
                 if pid not in players:
                     players[pid] = {
+                        "username": data.get("username", f"Player {pid}"),
                         "x": data["x"],
                         "y": data["y"],
                         "hp": 100,
@@ -63,10 +64,10 @@ def handle_client(conn, addr, player_id):
                         "is_moving": data.get("is_moving", False),
                         "hit_in_attack": set() 
                     }
+                    print(f"[NEW PLAYER] Player {pid} registered as '{players[pid]['username']}'.")
 
                 player = players[pid]
 
-                # Cek apakah ini serangan baru untuk me-reset 'attack_done'
                 if data.get("is_attacking", False) and not player["is_attacking"]:
                     player["hit_in_attack"] = set()
 
@@ -95,15 +96,15 @@ def handle_client(conn, addr, player_id):
                             if target["hp"] > 0:
                                 target["hp"] = max(0, target["hp"] - 20)
                                 player["hit_in_attack"].add(tid) # Catat target yang sudah dipukul
-                                print(f"[HIT] Player {pid} hit Player {tid}, HP: {target['hp']}")
+                                print(f"[HIT] Player {pid} ({player['username']}) hit Player {tid} ({target['username']}), HP: {target['hp']}")
                                 
                                 if target["hp"] == 0:
                                     target["is_dead"] = True
                                     target["death_time"] = pygame.time.get_ticks()
                                     if pid in players:
                                         players[pid]["score"] += 1
-                                    print(f"[DEAD] Player {tid} has died.")
-                    
+                                    print(f"[DEAD] Player {tid} ({target['username']}) has died.")
+                
                 conn.sendall(pickle.dumps({"players": players}))
 
     except (ConnectionResetError, EOFError, pickle.UnpicklingError) as e:
@@ -111,7 +112,8 @@ def handle_client(conn, addr, player_id):
     finally:
         with lock:
             if str(player_id) in players:
-                print(f"[DISCONNECTED] Player {player_id} disconnected")
+                username = players[str(player_id)].get('username', 'N/A')
+                print(f"[DISCONNECTED] Player {player_id} ({username}) disconnected")
                 del players[str(player_id)]
         conn.close()
 
