@@ -1,92 +1,133 @@
-import pygame
-import sys
+import socket
+import pickle
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import pygame  
+import time
 
-# Initialize Pygame
-pygame.init()
+HOST = "0.0.0.0"
+PORT = 5555
 
-WIDTH, HEIGHT = 640, 480
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("samurai battle arena")
+players = {}  # id: {x, y, hp, is_dead, is_attacking, death_time, attack_done}
+lock = threading.Lock()
 
-clock = pygame.time.Clock()
-FPS = 60
+RESPAWN_DELAY = 15000  # 15 detik
+SCREEN_WIDTH, SCREEN_HEIGHT = 1200, 600
 
-# Ukuran asli frame di sprite sheet
-FRAME_WIDTH = 64
-FRAME_HEIGHT = 64
-NUM_FRAMES = 5  # jumlah frame dalam 1 baris
+def respawn_player():
+    global players
+    while True:
+        with lock:
+            now = pygame.time.get_ticks()
+            for tid, target in players.items():
+                if target["is_dead"] and target["death_time"] is not None:
+                    if now - target["death_time"] >= RESPAWN_DELAY:
+                        # Reset status pemain
+                        target["hp"] = 100
+                        target["is_dead"] = False
+                        target["death_time"] = None
+                        # Atur posisi respawn ke tengah layar
+                        target["x"] = SCREEN_WIDTH // 2
+                        target["y"] = SCREEN_HEIGHT // 2
+                        print(f"[RESPAWN] Player {tid} respawned.")
+        
+        # efisiensi CPU
+        time.sleep(1/30)
 
-class samurai:
-    def __init__(self, id='1', isremote=False):
-        self.id = id
-        self.isremote = isremote
-        self.direction = "down"
-        self.x = WIDTH // 2
-        self.y = HEIGHT // 2
-        self.speed = 5
+def handle_client(conn, addr, player_id):
+    global players
+    print(f"[CONNECTED] Player {player_id} connected from {addr}")
+    conn.send(pickle.dumps(player_id))  # Kirim ID ke client
 
-        # Load sprite sheet
-        self.sheet = pygame.image.load("asset\craftpix-net-123681-free-samurai-pixel-art-sprite-sheets\Samurai_Commander\Idle.png").convert_alpha()
+    try:
+        while True:
+            data = conn.recv(4096)
+            if not data:
+                break
 
-        # Potong setiap frame dari sprite sheet
-        self.frames = []
-        for i in range(NUM_FRAMES):
-            frame = self.sheet.subsurface((i * FRAME_WIDTH, 0, FRAME_WIDTH, FRAME_HEIGHT))
-            self.frames.append(frame)
+            data = pickle.loads(data)
+            pid = str(player_id)
 
-        # Kontrol animasi
-        self.current_frame = 0
-        self.animation_counter = 0
-        self.animation_delay = 50  # semakin kecil semakin cepat animasinya
+            with lock:
+                # Inisialisasi player jika belum ada
+                if pid not in players:
+                    players[pid] = {
+                        "x": data["x"],
+                        "y": data["y"],
+                        "hp": 100,
+                        "is_attacking": False,
+                        "attack_done": False,
+                        "is_dead": False,
+                        "death_time": None,
+                        "facing": data.get("facing", "right"),
+                        "is_moving": data.get("is_moving", False)
+                    }
 
-    def move(self, keys):
-        if not self.isremote:
-            if keys[pygame.K_UP]:
-                self.y -= self.speed
-                self.direction = "up"
-            elif keys[pygame.K_DOWN]:
-                self.y += self.speed
-                self.direction = "down"
-            elif keys[pygame.K_LEFT]:
-                self.x -= self.speed
-                self.direction = "left"
-            elif keys[pygame.K_RIGHT]:
-                self.x += self.speed
-                self.direction = "right"
+                player = players[pid]
 
-    def draw(self, surface):
-        self.animation_counter += 1
-        if self.animation_counter >= self.animation_delay:
-            self.animation_counter = 0
-            self.current_frame = (self.current_frame + 1) % len(self.frames)
+                # Cek apakah ini serangan baru untuk me-reset 'attack_done'
+                if data.get("is_attacking", False) and not player["is_attacking"]:
+                    player["attack_done"] = False
 
-        surface.blit(self.frames[self.current_frame], (self.x, self.y))
+                # Update posisi dan status dari client
+                player["x"] = data["x"]
+                player["y"] = data["y"]
+                player["is_attacking"] = data.get("is_attacking", False)
+                player["facing"] = data.get("facing", "right")
+                player["is_moving"] = data.get("is_moving", False)
 
-# Simulasi pemain utama
-current_player = samurai("1")
+                # Deteksi serangan (hanya jika player hidup, menyerang, dan belum mendaratkan pukulan)
+                if data.get("attack_range") and player["is_attacking"] and not player["attack_done"] and not player["is_dead"]:
+                    arx, ary, aw, ah = data["attack_range"]
+                    attacker_rect = pygame.Rect(arx, ary, aw, ah)
 
-# Simulasi pemain lain (tetap diam)
-players = {
-    "2": samurai("2", isremote=True),
-    "3": samurai("3", isremote=True)
-}
+                    for tid, target in players.items():
+                        if tid == pid or target["is_dead"]:
+                            continue
 
-# Game Loop
-while True:
-    screen.fill((255, 255, 255))
+                        # Hitbox target (sesuaikan dengan ukuran di client)
+                        hitbox = pygame.Rect(target["x"] + 40, target["y"] + 50, 45, 80)
 
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
+                        if attacker_rect.colliderect(hitbox):
+                            if target["hp"] > 0:
+                                target["hp"] = max(0, target["hp"] - 20) # Kurangi HP, minimal 0
+                                print(f"[HIT] Player {pid} hit Player {tid}, HP: {target['hp']}")
+                                if target["hp"] == 0:
+                                    target["is_dead"] = True
+                                    target["death_time"] = pygame.time.get_ticks()
+                                    print(f"[DEAD] Player {tid} has died.")
+                    
+                    player["attack_done"] = True  # Tandai serangan ini sudah mendaratkan pukulan
 
-    keys = pygame.key.get_pressed()
-    current_player.move(keys)
-    current_player.draw(screen)
+                # Kirim state game terbaru ke client
+                conn.sendall(pickle.dumps({"players": players}))
 
-    for p in players.values():
-        p.move(keys)
-        p.draw(screen)
+    except (ConnectionResetError, EOFError, pickle.UnpicklingError) as e:
+        print(f"[ERROR/DISCONNECT] Player {player_id}: {e}")
+    finally:
+        with lock:
+            if str(player_id) in players:
+                print(f"[DISCONNECTED] Player {player_id} disconnected")
+                del players[str(player_id)]
+        conn.close()
 
-    pygame.display.flip()
-    clock.tick(FPS)
+def start_server():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((HOST, PORT))
+    server.listen()
+    print(f"[SERVER STARTED] Listening on port {PORT}...")
+
+    logic_thread = threading.Thread(target=respawn_player, daemon=True)
+    logic_thread.start()
+    print("[GAME LOGIC] Game logic thread has started.")
+
+    player_id = 1
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        while True:
+            conn, addr = server.accept()
+            executor.submit(handle_client, conn, addr, player_id)
+            player_id += 1
+
+if __name__ == "__main__":
+    pygame.init()  # Dibutuhkan untuk Rect dan tick
+    start_server()
