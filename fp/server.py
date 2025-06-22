@@ -1,139 +1,126 @@
 import socket
-import pickle
-from concurrent.futures import ThreadPoolExecutor
 import threading
-import pygame  
+import pickle
 import time
 
+# Konfigurasi Server
 HOST = "0.0.0.0"
-PORT = 5555
+PORT = 6001  # Ganti sesuai dengan port yang diberikan oleh load balancer
 
-players = {}  # id: {x, y, hp, is_dead, is_attacking, death_time, score, username}
+players = {}
 lock = threading.Lock()
 
-RESPAWN_DELAY = 10000  # 10 detik
-SCREEN_WIDTH, SCREEN_HEIGHT = 1200, 600
+RESPAWN_DELAY = 15
+DAMAGE = 20
 
-def respawn_player():
+class Player:
+    def __init__(self, conn, addr, pid):
+        self.conn = conn
+        self.addr = addr
+        self.id = pid
+        self.x = 100 + int(pid) * 50
+        self.y = 300
+        self.hp = 100
+        self.is_dead = False
+        self.is_attacking = False
+        self.attack_range = None
+        self.facing = 'right'
+        self.is_moving = False
+        self.username = f"Player {pid}"
+        self.score = 0
+        self.death_time = None
+
+    def to_dict(self):
+        return {
+            "x": self.x,
+            "y": self.y,
+            "hp": self.hp,
+            "is_dead": self.is_dead,
+            "is_attacking": self.is_attacking,
+            "facing": self.facing,
+            "is_moving": self.is_moving,
+            "score": self.score,
+            "username": self.username,
+        }
+
+def handle_client(conn, addr, pid):
     global players
+    print(f"[NEW CONNECTION] Player {pid} connected from {addr}")
+    conn.sendall(pickle.dumps(pid))
+
+    with lock:
+        players[pid] = Player(conn, addr, pid)
+
     while True:
-        with lock:
-            now = pygame.time.get_ticks()
-            for tid, target in players.items():
-                if target["is_dead"] and target["death_time"] is not None:
-                    if now - target["death_time"] >= RESPAWN_DELAY:
-                        # Reset status pemain
-                        target["hp"] = 100
-                        target["is_dead"] = False
-                        target["death_time"] = None
-                        # Atur posisi respawn ke tengah layar
-                        target["x"] = SCREEN_WIDTH // 2
-                        target["y"] = SCREEN_HEIGHT // 2
-                        print(f"[RESPAWN] Player {tid} ({target.get('username', 'N/A')}) respawned.")
-        
-        # efisiensi CPU
-        time.sleep(1/30) # Cek 30 kali per detik
-
-def handle_client(conn, addr, player_id):
-    global players
-    pid = str(player_id)
-    print(f"[CONNECTED] Player {pid} connected from {addr}")
-    conn.send(pickle.dumps(pid))  # Kirim ID ke client
-
-    try:
-        while True:
+        try:
             data = conn.recv(4096)
             if not data:
                 break
-
-            data = pickle.loads(data)
+            recv_data = pickle.loads(data)
 
             with lock:
-                # Inisialisasi player jika belum ada
-                if pid not in players:
-                    players[pid] = {
-                        "username": data.get("username", f"Player {pid}"),
-                        "x": data["x"],
-                        "y": data["y"],
-                        "hp": 100,
-                        "score": 0,
-                        "is_attacking": False,
-                        "is_dead": False,
-                        "death_time": None,
-                        "facing": data.get("facing", "right"),
-                        "is_moving": data.get("is_moving", False),
-                        "hit_in_attack": set() 
-                    }
-                    print(f"[NEW PLAYER] Player {pid} registered as '{players[pid]['username']}'.")
-
                 player = players[pid]
+                player.x = recv_data["x"]
+                player.y = recv_data["y"]
+                player.is_attacking = recv_data["is_attacking"]
+                player.facing = recv_data.get("facing", "right")
+                player.is_moving = recv_data.get("is_moving", False)
 
-                if data.get("is_attacking", False) and not player["is_attacking"]:
-                    player["hit_in_attack"] = set()
+                if not player.username and recv_data.get("username"):
+                    player.username = recv_data["username"]
 
-                # Update posisi dan status dari client
-                player.update({
-                    "x": data["x"], 
-                    "y": data["y"],
-                    "is_attacking": data.get("is_attacking", False),
-                    "facing": data.get("facing", "right"),
-                    "is_moving": data.get("is_moving", False)
-                })
+                if player.is_attacking and not player.is_dead and "attack_range" in recv_data:
+                    player.attack_range = recv_data["attack_range"]
+                    for pid2, target in players.items():
+                        if pid2 != pid and not target.is_dead:
+                            target_rect = (target.x + 40, target.y + 50, 45, 80)
+                            atk_rect = recv_data["attack_range"]
+                            atk_rect = pygame.Rect(*atk_rect)
+                            target_hitbox = pygame.Rect(*target_rect)
+                            if atk_rect.colliderect(target_hitbox):
+                                target.hp = max(0, target.hp - DAMAGE)
+                                if target.hp == 0:
+                                    target.is_dead = True
+                                    target.death_time = time.time()
+                                    player.score += 1
 
-                # Deteksi serangan
-                if data.get("attack_range") and player["is_attacking"] and not player["is_dead"]:
-                    arx, ary, aw, ah = data["attack_range"]
-                    attacker_rect = pygame.Rect(arx, ary, aw, ah)
-                    
-                    for tid, target in players.items():
-                        if tid == pid or target["is_dead"] or tid in player["hit_in_attack"]:
-                            continue
+                # Respawn
+                if player.is_dead and player.death_time:
+                    if time.time() - player.death_time >= RESPAWN_DELAY:
+                        player.hp = 100
+                        player.is_dead = False
+                        player.death_time = None
+                        player.x = 100 + int(pid) * 50
+                        player.y = 300
 
-                        # Hitbox target 
-                        hitbox = pygame.Rect(target["x"] + 40, target["y"] + 50, 45, 80)
+                all_data = {p_id: p.to_dict() for p_id, p in players.items()}
+                conn.sendall(pickle.dumps({"players": all_data}))
 
-                        if attacker_rect.colliderect(hitbox):
-                            if target["hp"] > 0:
-                                target["hp"] = max(0, target["hp"] - 20)
-                                player["hit_in_attack"].add(tid) # Catat target yang sudah dipukul
-                                print(f"[HIT] Player {pid} ({player['username']}) hit Player {tid} ({target['username']}), HP: {target['hp']}")
-                                
-                                if target["hp"] == 0:
-                                    target["is_dead"] = True
-                                    target["death_time"] = pygame.time.get_ticks()
-                                    if pid in players:
-                                        players[pid]["score"] += 1
-                                    print(f"[DEAD] Player {tid} ({target['username']}) has died.")
-                
-                conn.sendall(pickle.dumps({"players": players}))
+        except Exception as e:
+            print(f"[ERROR] Player {pid}: {e}")
+            break
 
-    except (ConnectionResetError, EOFError, pickle.UnpicklingError) as e:
-        print(f"[ERROR/DISCONNECT] Player {player_id}: {e}")
-    finally:
-        with lock:
-            if str(player_id) in players:
-                username = players[str(player_id)].get('username', 'N/A')
-                print(f"[DISCONNECTED] Player {player_id} ({username}) disconnected")
-                del players[str(player_id)]
-        conn.close()
+    print(f"[DISCONNECT] Player {pid} disconnected")
+    with lock:
+        del players[pid]
+    conn.close()
 
-def start_server():
+def start():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((HOST, PORT))
     server.listen()
-    print(f"[SERVER STARTED] Listening on port {PORT}...")
+    print(f"[SERVER] Running on {HOST}:{PORT}")
 
-    logic_thread = threading.Thread(target=respawn_player, daemon=True)
-    logic_thread.start()
-    print("[GAME LOGIC] Game logic thread has started.")
-
-    player_id = 1
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        while True:
-            conn, addr = server.accept()
-            executor.submit(handle_client, conn, addr, player_id)
-            player_id += 1
+    next_id = 1
+    while True:
+        conn, addr = server.accept()
+        pid = str(next_id)
+        next_id += 1
+        thread = threading.Thread(target=handle_client, args=(conn, addr, pid))
+        thread.start()
+        print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
 
 if __name__ == "__main__":
-    pygame.init()  # Dibutuhkan untuk Rect dan tick
-    start_server()
+    import pygame  # Pastikan pygame diimpor untuk pygame.Rect di server
+    start()
