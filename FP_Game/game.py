@@ -1,10 +1,9 @@
-# game.py (MODIFIED)
 import pygame
 import sys
 import socket
 import json
 
-# --- Konfigurasi game (tidak ada perubahan) ---
+
 WIDTH, HEIGHT = 1200, 600
 FPS = 60
 FRAME_WIDTH = 128
@@ -25,7 +24,6 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Samurai Battle Arena")
 clock = pygame.time.Clock()
 
-# --- Muat dan putar background music (tidak ada perubahan) ---
 try:
     pygame.mixer.music.load("asset/Epic Japanese Music – Samurai Warrior_1.mp3")
     pygame.mixer.music.set_volume(0.3)
@@ -36,15 +34,11 @@ except pygame.error as e:
 background = pygame.image.load("asset/Map2.jpg")
 background = pygame.transform.scale(background, (WIDTH, HEIGHT))
 
-# --- PERUBAHAN UTAMA DI KELAS INI ---
 class ClientInterface:
     def __init__(self):
         self.server_address = ('localhost', 5555)
-        # 1. Buat socket satu kali saat inisialisasi
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # 2. Hubungkan ke server satu kali
         self._connect_to_server()
-        # 3. Minta ID menggunakan koneksi yang sudah ada
         self.idplayer = self.request_id()
         if not self.idplayer:
             print("Tidak dapat terhubung atau mendapatkan ID dari server. Keluar.")
@@ -59,7 +53,7 @@ class ClientInterface:
             print("Berhasil terhubung ke server.")
         except socket.error as e:
             print(f"Gagal terhubung ke server di {self.server_address}: {e}")
-            self.sock = None # Tandai socket sebagai tidak valid
+            self.sock = None 
 
     def send_command(self, command_str):
         """Mengirim perintah menggunakan koneksi yang sudah ada."""
@@ -67,36 +61,29 @@ class ClientInterface:
             print("Tidak ada koneksi aktif ke server.")
             return None
         try:
-            # 4. Langsung kirim data, tidak perlu connect() lagi
             self.sock.sendall(command_str.encode())
             data = ""
             while True:
-                # Terima data dari buffer
                 chunk = self.sock.recv(1024)
                 if not chunk:
-                    # Koneksi ditutup oleh server
                     raise ConnectionResetError("Koneksi server terputus")
                 data += chunk.decode()
-                # Akhir pesan ditandai dengan \r\n\r\n
                 if "\r\n\r\n" in data:
                     break
             return json.loads(data.strip())
         except (socket.error, ConnectionResetError, json.JSONDecodeError) as e:
             print(f"Error komunikasi dengan server: {e}")
-            self.disconnect() # Putuskan koneksi jika terjadi error
+            self.disconnect()
             return None
 
-    # Fungsi request_id sekarang menggunakan send_command yang baru
     def request_id(self):
         response = self.send_command("connect\r\n\r\n")
         if response and response["status"] == "OK":
             return response["id"]
         else:
             print("Gagal mendapatkan ID dari server.")
-            return None # Kembalikan None jika gagal
-
-    # Fungsi-fungsi lain tidak berubah, mereka secara otomatis
-    # akan menggunakan metode send_command yang sudah efisien.
+            return None
+            
     def set_location(self, x, y, attacking=False, facing="right", is_moving=False):
         cmd = f"set_location {self.idplayer} {x} {y} {attacking} {facing} {is_moving}\r\n\r\n"
         return self.send_command(cmd)
@@ -121,18 +108,15 @@ class ClientInterface:
         """Mengirim perintah disconnect dan menutup socket."""
         if self.sock:
             cmd = f"disconnect {self.idplayer}\r\n\r\n"
-            # Coba kirim perintah disconnect, tapi jangan tunggu balasan
             try:
                 self.sock.sendall(cmd.encode())
             except socket.error as e:
                 print(f"Gagal mengirim pesan disconnect: {e}")
             finally:
-                # 5. Tutup socket di akhir sesi
                 self.sock.close()
-                self.sock = None # Tandai sudah tertutup
+                self.sock = None
                 print("Disconnected from server.")
 
-# --- Kelas Samurai (tidak ada perubahan) ---
 class Samurai:
     def __init__(self, id, isremote=False, client=None):
         self.id = id
@@ -265,7 +249,6 @@ class Samurai:
             text = font.render("DEAD", True, (255, 0, 0))
             surface.blit(text, (self.x + FRAME_WIDTH // 2 - text.get_width() // 2, self.y - 30))
 
-# --- Fungsi draw_game_over_screen (tidak ada perubahan) ---
 def draw_game_over_screen():
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 150))
@@ -281,15 +264,11 @@ def draw_game_over_screen():
     text_rect_prompt = text_prompt.get_rect(center=(WIDTH/2, HEIGHT/2 + 40))
     screen.blit(text_prompt, text_rect_prompt)
 
-# --- Game Loop Utama (tidak ada perubahan signifikan) ---
 client = ClientInterface()
-# Jika koneksi gagal, client.idplayer akan menjadi None dan program akan keluar.
-# Kita tidak perlu cek di sini lagi karena sudah ditangani di dalam __init__.
 
 current_player = Samurai(client.idplayer, isremote=False, client=client)
 
 players = {}
-# Sedikit pengaman jika get_all_players gagal karena koneksi error
 all_player_ids = client.get_all_players()
 if all_player_ids:
     for pid in all_player_ids:
@@ -310,7 +289,6 @@ while running:
         current_player.move(keys)
 
         players_state = client.get_players_state()
-        # Tambahkan pengecekan jika state gagal diambil
         if players_state is None:
             print("Koneksi ke server hilang, game akan berhenti.")
             running = False
@@ -355,14 +333,11 @@ while running:
         for samurai in players.values():
             samurai.draw(screen)
 
-    else: # jika current_player.is_dead
+    else:
         screen.blit(background, (0, 0))
-        # Gambar pemain lain terlebih dahulu
         for samurai in players.values():
             samurai.draw(screen)
-        # Kemudian gambar pemain kita yang sudah mati
         current_player.draw(screen)
-        # Tampilkan layar game over
         draw_game_over_screen()
 
     pygame.display.flip()
