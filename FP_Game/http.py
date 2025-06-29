@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime
 
-class GameServer:
+class HttpServer:
     def __init__(self):
         self.players = {}
 
