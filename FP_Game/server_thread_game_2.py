@@ -1,5 +1,3 @@
-
-# server_thread_game.py (MODIFIED)
 import socket
 import threading
 import logging
@@ -12,38 +10,31 @@ class ClientHandler(threading.Thread):
         threading.Thread.__init__(self)
         self.conn = conn
         self.addr = addr
-        self.player_id = None # Untuk melacak ID pemain di koneksi ini
+        self.player_id = None
 
     def run(self):
         logging.info(f"Connection from {self.addr}")
-        rcv_buffer = "" # Gunakan buffer untuk menampung data yang masuk
+        rcv_buffer = ""
         while True:
             try:
                 data = self.conn.recv(1024)
                 if not data:
-                    # Klien menutup koneksi
                     logging.info(f"Client {self.addr} has disconnected.")
                     break
                 
                 rcv_buffer += data.decode()
-                
-                # Proses semua perintah lengkap yang ada di buffer
-                # Mungkin saja klien mengirim beberapa perintah sekaligus
+
                 while "\r\n\r\n" in rcv_buffer:
-                    # Pisahkan perintah pertama dari sisa buffer
                     command_part, rcv_buffer = rcv_buffer.split("\r\n\r\n", 1)
                     
-                    # Proses perintah
                     response = httpserver.proses(command_part.strip())
-                    
-                    # Kirim balasan ke klien
+
                     self.conn.sendall(response)
 
             except Exception as e:
                 logging.error(f"Error handling client {self.addr}: {e}")
                 break
-        
-        # Cleanup saat koneksi terputus
+
         if self.player_id:
             httpserver.proses(f"disconnect {self.player_id}")
             logging.info(f"Player {self.player_id} from {self.addr} has been cleaned up.")
