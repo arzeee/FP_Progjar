@@ -24,7 +24,6 @@ class LoadBalancer:
         logging.info(f"Load Balancer berjalan di {self.host}:{self.port}")
 
     def run(self):
-        """Menerima koneksi dari klien dan meneruskannya ke backend."""
         while True:
             try:
                 client_socket, client_address = self.sock.accept()
@@ -44,7 +43,6 @@ class LoadBalancer:
                 logging.error(f"Error di loop utama: {e}")
 
     def handle_connection(self, client_socket, backend_address):
-        """Menghubungkan ke backend dan menyalurkan data dua arah."""
         try:
             backend_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             backend_socket.connect(backend_address)
@@ -73,7 +71,6 @@ class LoadBalancer:
             client_socket.close()
 
     def forward_data(self, source_socket, dest_socket):
-        """Membaca data dari satu socket dan menulisnya ke socket lain."""
         try:
             while True:
                 data = source_socket.recv(4096)
