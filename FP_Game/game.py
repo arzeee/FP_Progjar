@@ -1,9 +1,10 @@
+# game.py (MODIFIED)
 import pygame
 import sys
 import socket
 import json
 
-# Konfigurasi game
+# --- Konfigurasi game (tidak ada perubahan) ---
 WIDTH, HEIGHT = 1200, 600
 FPS = 60
 FRAME_WIDTH = 128
@@ -17,7 +18,6 @@ ATTACK_COOLDOWN = 30
 DAMAGE = 20
 
 pygame.init()
-# Inisialisasi mixer dengan pengaturan yang mungkin lebih baik untuk mengurangi jeda
 pygame.mixer.pre_init()
 pygame.init()
 
@@ -25,10 +25,10 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Samurai Battle Arena")
 clock = pygame.time.Clock()
 
-# Muat dan putar background music
+# --- Muat dan putar background music (tidak ada perubahan) ---
 try:
-    pygame.mixer.music.load("asset\Epic Japanese Music – Samurai Warrior_1.mp3")
-    pygame.mixer.music.set_volume(0.3) # Volume BGM sedikit diturunkan agar SFX terdengar
+    pygame.mixer.music.load("asset/Epic Japanese Music – Samurai Warrior_1.mp3")
+    pygame.mixer.music.set_volume(0.3)
     pygame.mixer.music.play(loops=-1)
 except pygame.error as e:
     print(f"Peringatan: Tidak dapat memuat file BGM. Error: {e}")
@@ -36,39 +36,67 @@ except pygame.error as e:
 background = pygame.image.load("asset/Map2.jpg")
 background = pygame.transform.scale(background, (WIDTH, HEIGHT))
 
+# --- PERUBAHAN UTAMA DI KELAS INI ---
 class ClientInterface:
     def __init__(self):
-        self.server_address = ('localhost', 6001)
+        self.server_address = ('localhost', 5555)
+        # 1. Buat socket satu kali saat inisialisasi
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # 2. Hubungkan ke server satu kali
+        self._connect_to_server()
+        # 3. Minta ID menggunakan koneksi yang sudah ada
         self.idplayer = self.request_id()
+        if not self.idplayer:
+            print("Tidak dapat terhubung atau mendapatkan ID dari server. Keluar.")
+            pygame.quit()
+            sys.exit()
 
+    def _connect_to_server(self):
+        """Menghubungkan socket ke server."""
+        try:
+            print("Menghubungkan ke server...")
+            self.sock.connect(self.server_address)
+            print("Berhasil terhubung ke server.")
+        except socket.error as e:
+            print(f"Gagal terhubung ke server di {self.server_address}: {e}")
+            self.sock = None # Tandai socket sebagai tidak valid
+
+    def send_command(self, command_str):
+        """Mengirim perintah menggunakan koneksi yang sudah ada."""
+        if not self.sock:
+            print("Tidak ada koneksi aktif ke server.")
+            return None
+        try:
+            # 4. Langsung kirim data, tidak perlu connect() lagi
+            self.sock.sendall(command_str.encode())
+            data = ""
+            while True:
+                # Terima data dari buffer
+                chunk = self.sock.recv(1024)
+                if not chunk:
+                    # Koneksi ditutup oleh server
+                    raise ConnectionResetError("Koneksi server terputus")
+                data += chunk.decode()
+                # Akhir pesan ditandai dengan \r\n\r\n
+                if "\r\n\r\n" in data:
+                    break
+            return json.loads(data.strip())
+        except (socket.error, ConnectionResetError, json.JSONDecodeError) as e:
+            print(f"Error komunikasi dengan server: {e}")
+            self.disconnect() # Putuskan koneksi jika terjadi error
+            return None
+
+    # Fungsi request_id sekarang menggunakan send_command yang baru
     def request_id(self):
         response = self.send_command("connect\r\n\r\n")
         if response and response["status"] == "OK":
             return response["id"]
         else:
             print("Gagal mendapatkan ID dari server.")
-            sys.exit()
+            return None # Kembalikan None jika gagal
 
-    def send_command(self, command_str):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            sock.connect(self.server_address)
-            sock.sendall(command_str.encode())
-            data = ""
-            while True:
-                chunk = sock.recv(1024)
-                if not chunk:
-                    break
-                data += chunk.decode()
-                if "\r\n\r\n" in data:
-                    break
-            return json.loads(data.strip())
-        except Exception as e:
-            print(f"Error in send_command: {e}")
-            return None
-        finally:
-            sock.close()
-
+    # Fungsi-fungsi lain tidak berubah, mereka secara otomatis
+    # akan menggunakan metode send_command yang sudah efisien.
     def set_location(self, x, y, attacking=False, facing="right", is_moving=False):
         cmd = f"set_location {self.idplayer} {x} {y} {attacking} {facing} {is_moving}\r\n\r\n"
         return self.send_command(cmd)
@@ -90,10 +118,21 @@ class ClientInterface:
         return {}
 
     def disconnect(self):
-        cmd = f"disconnect {self.idplayer}\r\n\r\n"
-        self.send_command(cmd)
-        print("Disconnected from server.")
+        """Mengirim perintah disconnect dan menutup socket."""
+        if self.sock:
+            cmd = f"disconnect {self.idplayer}\r\n\r\n"
+            # Coba kirim perintah disconnect, tapi jangan tunggu balasan
+            try:
+                self.sock.sendall(cmd.encode())
+            except socket.error as e:
+                print(f"Gagal mengirim pesan disconnect: {e}")
+            finally:
+                # 5. Tutup socket di akhir sesi
+                self.sock.close()
+                self.sock = None # Tandai sudah tertutup
+                print("Disconnected from server.")
 
+# --- Kelas Samurai (tidak ada perubahan) ---
 class Samurai:
     def __init__(self, id, isremote=False, client=None):
         self.id = id
@@ -124,29 +163,23 @@ class Samurai:
         self.animation_delay = 5
         self.attack_animating = False
 
-        # --- PENAMBAHAN SFX ---
         self.is_walking_sound_playing = False
         if not self.isremote:
             try:
-                self.walk_sound = pygame.mixer.Sound("asset\Footsteps Grass Sound Effect (HD)_1.mp3")
-                self.attack_sound = pygame.mixer.Sound("asset\sword slash (sound effects) __ mani creation ___1_1_1.mp3")
-                self.hit_sound = pygame.mixer.Sound("asset\Male Pain_Hurt Sound Effects - 8 Sounds_1_1_1.mp3")
-                self.death_sound = pygame.mixer.Sound("asset\Dead Rails Death Sound Effect_1_1.mp3")
-                # Atur volume untuk setiap efek suara
+                self.walk_sound = pygame.mixer.Sound("asset/Footsteps Grass Sound Effect (HD)_1.mp3")
+                self.attack_sound = pygame.mixer.Sound("asset/sword slash (sound effects) __ mani creation ___1_1_1.mp3")
+                self.hit_sound = pygame.mixer.Sound("asset/Male Pain_Hurt Sound Effects - 8 Sounds_1_1_1.mp3")
+                self.death_sound = pygame.mixer.Sound("asset/Dead Rails Death Sound Effect_1_1.mp3")
                 self.walk_sound.set_volume(0.9)
                 self.attack_sound.set_volume(0.8)
                 self.hit_sound.set_volume(0.7)
                 self.death_sound.set_volume(0.5)
             except pygame.error as e:
                 print(f"Peringatan: Gagal memuat salah satu file SFX. Error: {e}")
-                # Jadikan suara sebagai objek dummy jika gagal dimuat
                 self.walk_sound = self.attack_sound = self.hit_sound = self.death_sound = None
-
 
     def move(self, keys=None):
         if self.isremote or self.is_dead:
-            # --- PENAMBAHAN SFX ---
-            # Pastikan suara berjalan berhenti jika karakter mati
             if self.is_walking_sound_playing and self.walk_sound:
                 self.walk_sound.stop()
                 self.is_walking_sound_playing = False
@@ -173,18 +206,15 @@ class Samurai:
             self.attack_animating = True
             self.current_frame = 0
             self.attack_cooldown = ATTACK_COOLDOWN
-            # --- PENAMBAHAN SFX ---
             if self.attack_sound: self.attack_sound.play()
             self.client.send_attack(self.id, self.x, self.y, self.facing, ATTACK_RANGE)
 
-        # --- PENAMBAHAN SFX ---
-        # Logika untuk memutar dan menghentikan suara berjalan
         if self.walk_sound:
             if self.is_moving and not self.is_walking_sound_playing:
-                self.walk_sound.play(loops=-1) # Putar dan loop
+                self.walk_sound.play(loops=-1)
                 self.is_walking_sound_playing = True
             elif not self.is_moving and self.is_walking_sound_playing:
-                self.walk_sound.stop() # Hentikan loop
+                self.walk_sound.stop()
                 self.is_walking_sound_playing = False
 
         self.x = max(0, min(self.x, WIDTH - FRAME_WIDTH))
@@ -235,6 +265,7 @@ class Samurai:
             text = font.render("DEAD", True, (255, 0, 0))
             surface.blit(text, (self.x + FRAME_WIDTH // 2 - text.get_width() // 2, self.y - 30))
 
+# --- Fungsi draw_game_over_screen (tidak ada perubahan) ---
 def draw_game_over_screen():
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 150))
@@ -250,13 +281,20 @@ def draw_game_over_screen():
     text_rect_prompt = text_prompt.get_rect(center=(WIDTH/2, HEIGHT/2 + 40))
     screen.blit(text_prompt, text_rect_prompt)
 
+# --- Game Loop Utama (tidak ada perubahan signifikan) ---
 client = ClientInterface()
+# Jika koneksi gagal, client.idplayer akan menjadi None dan program akan keluar.
+# Kita tidak perlu cek di sini lagi karena sudah ditangani di dalam __init__.
+
 current_player = Samurai(client.idplayer, isremote=False, client=client)
 
 players = {}
-for pid in client.get_all_players():
-    if pid != current_player.id:
-        players[pid] = Samurai(pid, isremote=True, client=client)
+# Sedikit pengaman jika get_all_players gagal karena koneksi error
+all_player_ids = client.get_all_players()
+if all_player_ids:
+    for pid in all_player_ids:
+        if pid != current_player.id:
+            players[pid] = Samurai(pid, isremote=True, client=client)
 
 running = True
 while running:
@@ -272,17 +310,20 @@ while running:
         current_player.move(keys)
 
         players_state = client.get_players_state()
+        # Tambahkan pengecekan jika state gagal diambil
+        if players_state is None:
+            print("Koneksi ke server hilang, game akan berhenti.")
+            running = False
+            continue
+
         for pid, state in players_state.items():
             if pid == current_player.id:
-                # --- PENAMBAHAN SFX ---
-                # Cek sebelum HP diupdate untuk memutar suara
                 if current_player.hp > state["hp"] and current_player.hit_sound:
                     current_player.hit_sound.play()
                 
                 if not current_player.is_dead and state["is_dead"] and current_player.death_sound:
                     current_player.death_sound.play()
 
-                # Update status pemain
                 current_player.hp = state["hp"]
                 current_player.is_dead = state["is_dead"]
 
@@ -314,11 +355,14 @@ while running:
         for samurai in players.values():
             samurai.draw(screen)
 
-    else:
+    else: # jika current_player.is_dead
         screen.blit(background, (0, 0))
+        # Gambar pemain lain terlebih dahulu
         for samurai in players.values():
             samurai.draw(screen)
+        # Kemudian gambar pemain kita yang sudah mati
         current_player.draw(screen)
+        # Tampilkan layar game over
         draw_game_over_screen()
 
     pygame.display.flip()
