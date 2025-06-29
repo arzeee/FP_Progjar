@@ -18,7 +18,7 @@ DAMAGE = 20
 
 pygame.init()
 # Inisialisasi mixer dengan pengaturan yang mungkin lebih baik untuk mengurangi jeda
-pygame.mixer.pre_init(44100, -16, 2, 512)
+pygame.mixer.pre_init()
 pygame.init()
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
