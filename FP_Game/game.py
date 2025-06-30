@@ -3,7 +3,6 @@ import sys
 import socket
 import json
 
-
 WIDTH, HEIGHT = 1200, 600
 FPS = 60
 FRAME_WIDTH = 128
@@ -34,6 +33,11 @@ except pygame.error as e:
 background = pygame.image.load("asset/Map2.jpg")
 background = pygame.transform.scale(background, (WIDTH, HEIGHT))
 
+import socket
+import json
+import pygame
+import sys
+
 class ClientInterface:
     def __init__(self):
         self.server_address = ('localhost', 5555)
@@ -46,76 +50,76 @@ class ClientInterface:
             sys.exit()
 
     def _connect_to_server(self):
-        """Menghubungkan socket ke server."""
         try:
             print("Menghubungkan ke server...")
             self.sock.connect(self.server_address)
             print("Berhasil terhubung ke server.")
         except socket.error as e:
             print(f"Gagal terhubung ke server di {self.server_address}: {e}")
-            self.sock = None 
+            self.sock = None
 
-    def send_command(self, command_str):
-        """Mengirim perintah menggunakan koneksi yang sudah ada."""
+    def send_http_request(self, method, path):
         if not self.sock:
             print("Tidak ada koneksi aktif ke server.")
             return None
         try:
-            self.sock.sendall(command_str.encode())
-            data = ""
+            request = f"{method} {path} HTTP/1.0\r\nHost: localhost\r\n\r\n"
+            self.sock.sendall(request.encode())
+
+            data = b""
             while True:
                 chunk = self.sock.recv(1024)
                 if not chunk:
-                    raise ConnectionResetError("Koneksi server terputus")
-                data += chunk.decode()
-                if "\r\n\r\n" in data:
                     break
-            return json.loads(data.strip())
+                data += chunk
+                if b"\r\n\r\n" in data:
+                    break
+
+            if b"\r\n\r\n" not in data:
+                return None
+
+            _, body = data.split(b"\r\n\r\n", 1)
+            return json.loads(body.decode().strip())
         except (socket.error, ConnectionResetError, json.JSONDecodeError) as e:
             print(f"Error komunikasi dengan server: {e}")
             self.disconnect()
             return None
 
     def request_id(self):
-        response = self.send_command("connect\r\n\r\n")
-        if response and response["status"] == "OK":
-            return response["id"]
-        else:
-            print("Gagal mendapatkan ID dari server.")
-            return None
-            
+        result = self.send_http_request("GET", "/connect")
+        return result.get("id", None) if result else None
+
     def set_location(self, x, y, attacking=False, facing="right", is_moving=False):
-        cmd = f"set_location {self.idplayer} {x} {y} {attacking} {facing} {is_moving}\r\n\r\n"
-        return self.send_command(cmd)
+        path = f"/set_location/{self.idplayer}/{x}/{y}/{attacking}/{facing}/{is_moving}"
+        return self.send_http_request("POST", path)
 
     def get_all_players(self):
-        result = self.send_command("get_all_players\r\n\r\n")
+        result = self.send_http_request("GET", "/get_all_players")
         if result and result["status"] == "OK":
             return result["players"]
         return []
 
     def send_attack(self, attacker_id, x, y, facing, attack_range):
-        cmd = f"attack {attacker_id} {x} {y} {facing} {attack_range}\r\n\r\n"
-        return self.send_command(cmd)
+        path = f"/attack/{attacker_id}/{x}/{y}/{facing}/{attack_range}"
+        return self.send_http_request("POST", path)
 
     def get_players_state(self):
-        result = self.send_command("get_players_state\r\n\r\n")
+        result = self.send_http_request("GET", "/get_players_state")
         if result and result["status"] == "OK":
             return result["players"]
         return {}
 
     def disconnect(self):
-        """Mengirim perintah disconnect dan menutup socket."""
         if self.sock:
-            cmd = f"disconnect {self.idplayer}\r\n\r\n"
             try:
-                self.sock.sendall(cmd.encode())
+                self.send_http_request("POST", f"/disconnect/{self.idplayer}")
             except socket.error as e:
                 print(f"Gagal mengirim pesan disconnect: {e}")
             finally:
                 self.sock.close()
                 self.sock = None
                 print("Disconnected from server.")
+
 
 class Samurai:
     def __init__(self, id, isremote=False, client=None):
@@ -269,6 +273,7 @@ client = ClientInterface()
 current_player = Samurai(client.idplayer, isremote=False, client=client)
 
 players = {}
+
 all_player_ids = client.get_all_players()
 if all_player_ids:
     for pid in all_player_ids:
@@ -333,7 +338,7 @@ while running:
         for samurai in players.values():
             samurai.draw(screen)
 
-    else:
+    else: 
         screen.blit(background, (0, 0))
         for samurai in players.values():
             samurai.draw(screen)
