@@ -33,11 +33,6 @@ except pygame.error as e:
 background = pygame.image.load("asset/Map2.jpg")
 background = pygame.transform.scale(background, (WIDTH, HEIGHT))
 
-import socket
-import json
-import pygame
-import sys
-
 class ClientInterface:
     def __init__(self):
         self.server_address = ('localhost', 5555)
